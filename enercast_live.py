@@ -70,12 +70,32 @@ def require_within(name, watts, ceiling):
         raise ValueError(f"{name} liegt über der Anlagenleistung.")
 
 
-def parse_start(start, now):
+def require_period(period_minutes):
+    if (
+        isinstance(period_minutes, bool)
+        or not isinstance(period_minutes, int)
+        or period_minutes < 1
+        or 60 % period_minutes != 0
+    ):
+        raise ValueError("period_minutes muss 60 teilen.")
+    return period_minutes
+
+
+def period_token(period_minutes):
+    if period_minutes == 60:
+        return "PT1H"
+    return f"PT{period_minutes}M"
+
+
+def parse_start(start, now, period_minutes=1):
+    period_minutes = require_period(period_minutes)
     if start is None:
         if now.tzinfo is None:
             now = now.replace(tzinfo=timezone.utc)
         now = now.astimezone(timezone.utc).replace(second=0, microsecond=0)
-        return now - timedelta(minutes=1)
+        floored_minute = (now.minute // period_minutes) * period_minutes
+        floored = now.replace(minute=floored_minute)
+        return floored - timedelta(minutes=period_minutes)
 
     if isinstance(start, datetime):
         parsed = start
@@ -93,8 +113,10 @@ def parse_start(start, now):
     if parsed.tzinfo is None or parsed.utcoffset() != timedelta(0):
         raise ValueError("start muss UTC sein.")
     parsed = parsed.astimezone(timezone.utc)
-    if parsed.second or parsed.microsecond:
-        raise ValueError("start muss auf einer vollen Minute liegen.")
+    if parsed.second or parsed.microsecond or parsed.minute % period_minutes:
+        if period_minutes == 1:
+            raise ValueError("start muss auf einer vollen Minute liegen.")
+        raise ValueError(f"start muss auf einem {period_minutes}-Minuten-Raster liegen.")
     return parsed.replace(second=0, microsecond=0)
 
 
@@ -119,14 +141,15 @@ class LiveData:
             )
         return cls(username, password, env.get("ENERCAST_ACCOUNT_ID") or username)
 
-    def send(self, plant_key, power, curtailment_w, power_unit="W", start=None):
+    def send(self, plant_key, power, curtailment_w, power_unit="W", start=None, period_minutes=1):
         key = plant_key.strip() if isinstance(plant_key, str) else ""
         if not key:
             raise ValueError("Anlagenschlüssel fehlt.")
+        period_minutes = require_period(period_minutes)
         power_w = to_watts(power, power_unit)
         require_within("Leistung", power_w, None)
         require_within("Abregelung", curtailment_w, None)
-        start_at = parse_start(start, datetime.now(timezone.utc))
+        start_at = parse_start(start, datetime.now(timezone.utc), period_minutes)
 
         token = self._login()
         asset = self._get_asset(token, key)
@@ -134,8 +157,8 @@ class LiveData:
         require_within("Leistung", power_w, ceiling)
         require_within("Abregelung", curtailment_w, ceiling)
 
-        self._post_power(token, key, power_w, start_at)
-        self._post_curtailment(token, key, float(curtailment_w), start_at)
+        self._post_power(token, key, power_w, start_at, period_minutes)
+        self._post_curtailment(token, key, float(curtailment_w), start_at, period_minutes)
         return start_at
 
     def _login(self):
@@ -155,7 +178,7 @@ class LiveData:
             raise ApiError(200, "Unerwartetes Antwortformat für die Anlage.")
         return asset
 
-    def _post_power(self, token, plant_key, power_w, start_at):
+    def _post_power(self, token, plant_key, power_w, start_at, period_minutes):
         query = {
             "ds.category": "site-power",
             "ds.property": "generation",
@@ -168,7 +191,7 @@ class LiveData:
             "format": "compact-values",
             "quantity-name": "P",
             "unit": "W",
-            "periodicity": ["R/PT1M"],
+            "periodicity": [f"R/{period_token(period_minutes)}"],
             "start": format_instant(start_at),
             "interval-type": "[,[",
             "time-zone": "UTC",
@@ -183,7 +206,7 @@ class LiveData:
             body=body,
         )
 
-    def _post_curtailment(self, token, plant_key, curtailment_w, start_at):
+    def _post_curtailment(self, token, plant_key, curtailment_w, start_at, period_minutes):
         query = {
             "ds.category": "site-power",
             "ds.property": "available-generation-capacity.curtailment",
@@ -194,7 +217,7 @@ class LiveData:
             "value": curtailment_w,
             "unit": "W",
             "start-instant": format_instant(start_at),
-            "end-instant": format_instant(start_at + timedelta(minutes=1)),
+            "end-instant": format_instant(start_at + timedelta(minutes=period_minutes)),
             "time-zone": "UTC",
         }
         self._request(

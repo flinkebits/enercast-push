@@ -65,6 +65,75 @@ class ValidationTest(unittest.TestCase):
             datetime(2026, 10, 4, 8, 45, tzinfo=timezone.utc),
         )
 
+    def test_default_quarter_is_previous_completed_slice(self):
+        now = datetime(2026, 10, 4, 10, 17, 30, tzinfo=timezone.utc)
+        self.assertEqual(
+            parse_start(None, now, 15),
+            datetime(2026, 10, 4, 10, 0, tzinfo=timezone.utc),
+        )
+
+    def test_default_quarter_on_boundary_is_previous_slice(self):
+        now = datetime(2026, 10, 4, 10, 15, tzinfo=timezone.utc)
+        self.assertEqual(
+            parse_start(None, now, 15),
+            datetime(2026, 10, 4, 10, 0, tzinfo=timezone.utc),
+        )
+
+    def test_default_quarter_crosses_hour(self):
+        now = datetime(2026, 10, 4, 0, 5, tzinfo=timezone.utc)
+        self.assertEqual(
+            parse_start(None, now, 15),
+            datetime(2026, 10, 3, 23, 45, tzinfo=timezone.utc),
+        )
+
+    def test_quarter_hour_start_accepted(self):
+        now = datetime(2026, 10, 4, 10, 17, tzinfo=timezone.utc)
+        self.assertEqual(
+            parse_start("2026-10-04T10:15:00Z", now, 15),
+            datetime(2026, 10, 4, 10, 15, tzinfo=timezone.utc),
+        )
+
+    def test_off_grid_quarter_rejected(self):
+        now = datetime(2026, 10, 4, 10, 17, tzinfo=timezone.utc)
+        with self.assertRaises(ValueError):
+            parse_start("2026-10-04T10:07:00Z", now, 15)
+
+    def test_period_must_divide_hour(self):
+        now = datetime(2026, 10, 4, 10, 17, tzinfo=timezone.utc)
+        with self.assertRaises(ValueError):
+            parse_start(None, now, 7)
+
+    def test_quarter_payload_uses_fifteen_minute_slice(self):
+        client = LiveData("user", "secret")
+        captured = []
+
+        def capture(method, path, token=None, body=None, query=None):
+            captured.append(body)
+
+        client._request = capture
+        start = datetime(2026, 10, 4, 10, 0, tzinfo=timezone.utc)
+        client._post_power("token", "Feld0", 1000.0, start, 15)
+        client._post_curtailment("token", "Feld0", 500.0, start, 15)
+        self.assertEqual(captured[0]["periodicity"], ["R/PT15M"])
+        self.assertEqual(captured[0]["start"], "2026-10-04T10:00:00Z")
+        self.assertEqual(captured[0]["values"], [1000.0])
+        self.assertEqual(captured[1]["start-instant"], "2026-10-04T10:00:00Z")
+        self.assertEqual(captured[1]["end-instant"], "2026-10-04T10:15:00Z")
+
+    def test_default_payload_stays_one_minute(self):
+        client = LiveData("user", "secret")
+        captured = []
+
+        def capture(method, path, token=None, body=None, query=None):
+            captured.append(body)
+
+        client._request = capture
+        start = datetime(2026, 10, 4, 8, 45, tzinfo=timezone.utc)
+        client._post_power("token", "Feld0", 1000.0, start, 1)
+        client._post_curtailment("token", "Feld0", 500.0, start, 1)
+        self.assertEqual(captured[0]["periodicity"], ["R/PT1M"])
+        self.assertEqual(captured[1]["end-instant"], "2026-10-04T08:46:00Z")
+
     def test_invalid_values_do_not_login(self):
         client = LiveData("user", "secret")
 
@@ -74,6 +143,16 @@ class ValidationTest(unittest.TestCase):
         client._login = fail_login
         with self.assertRaises(ValueError):
             client.send("Feld0", power=-1, curtailment_w=0)
+        with self.assertRaises(ValueError):
+            client.send("Feld0", power=1, curtailment_w=0, period_minutes=7)
+        with self.assertRaises(ValueError):
+            client.send(
+                "Feld0",
+                power=1,
+                curtailment_w=0,
+                start="2026-10-04T10:07:00Z",
+                period_minutes=15,
+            )
 
 
 if __name__ == "__main__":
