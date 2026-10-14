@@ -86,6 +86,20 @@ class ValidationTest(unittest.TestCase):
             datetime(2026, 10, 3, 23, 45, tzinfo=timezone.utc),
         )
 
+    def test_default_five_minute_is_previous_slice(self):
+        now = datetime(2026, 10, 4, 10, 12, 30, tzinfo=timezone.utc)
+        self.assertEqual(
+            parse_start(None, now, 5),
+            datetime(2026, 10, 4, 10, 5, tzinfo=timezone.utc),
+        )
+
+    def test_five_minute_start_accepted(self):
+        now = datetime(2026, 10, 4, 10, 12, tzinfo=timezone.utc)
+        self.assertEqual(
+            parse_start("2026-10-04T10:05:00Z", now, 5),
+            datetime(2026, 10, 4, 10, 5, tzinfo=timezone.utc),
+        )
+
     def test_quarter_hour_start_accepted(self):
         now = datetime(2026, 10, 4, 10, 17, tzinfo=timezone.utc)
         self.assertEqual(

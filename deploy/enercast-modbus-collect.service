@@ -1,0 +1,16 @@
+[Unit]
+Description=enercast Modbus collect (5-Min-UTC Cache)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=zaehler
+Group=zaehler
+WorkingDirectory=/home/zaehler/enercast
+ExecStart=/usr/bin/python3 /home/zaehler/enercast/collect_modbus2enercast.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
