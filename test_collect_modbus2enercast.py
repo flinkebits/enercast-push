@@ -37,7 +37,8 @@ class EvaluateBucketTest(unittest.TestCase):
         self.assertIsNone(reason)
 
     def test_expected_samples_constant(self):
-        self.assertEqual(EXPECTED_SAMPLES, 300)
+        self.assertEqual(EXPECTED_SAMPLES, 100)
+        self.assertEqual(MIN_SAMPLES, 25)
 
 
 if __name__ == "__main__":

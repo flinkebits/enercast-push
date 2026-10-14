@@ -6,7 +6,7 @@ Live-Wirkleistung und PV-Abregelung vom Huawei-SmartLogger (Modbus TCP) in die [
 
 | Datei | Rolle |
 |--------|--------|
-| `collect_modbus2enercast.py` | Dämon: Modbus ~1 Hz, Mittelwert pro 5-Min-Fenster → Cache |
+| `collect_modbus2enercast.py` | Dämon: Modbus alle 3 s, Mittelwert pro 5-Min-Fenster → Cache |
 | `post_modbus2enercast.py` | Dämon: `pending` aus Cache → enercast API |
 | `interval_store.py` | SQLite, Intervall-Raster, Status |
 | `enercast_live.py` | API-Client (Login, Power, Abregelung) |

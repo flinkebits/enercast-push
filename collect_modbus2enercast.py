@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Liest Modbus ~1 Hz, bildet 5-Minuten-UTC-Mittelwerte und schreibt sie in den Cache."""
+"""Liest Modbus im 3-Sekunden-Takt, bildet 5-Minuten-UTC-Mittelwerte und schreibt sie in den Cache."""
 
 from __future__ import annotations
 
@@ -26,9 +26,9 @@ HOST = "172.20.5.110"
 PORT = 502
 UNIT_ID = 0
 READ_FUNCTION = 3
-TICK_SECONDS = 1.0
-EXPECTED_SAMPLES = PERIOD_MINUTES * 60
-MIN_SAMPLES = 200
+TICK_SECONDS = 3.0
+EXPECTED_SAMPLES = int(PERIOD_MINUTES * 60 / TICK_SECONDS)
+MIN_SAMPLES = max(1, EXPECTED_SAMPLES // 4)
 MAX_KW = 100_000
 INVALID_SIGNED = 0x7FFFFFFF
 INVALID_UNSIGNED = 0xFFFFFFFF
