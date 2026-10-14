@@ -13,6 +13,23 @@ Live-Wirkleistung und PV-Abregelung vom Huawei-SmartLogger (Modbus TCP) in die [
 | `read_modbus_power.py` | Debug: Modbus-Werte jede Sekunde auf der Konsole |
 | `example_send.py` | Manuell einen Wert senden |
 | `list_assets.py` | Anlagen des Accounts auflisten |
+| `list_intervals.py` | Cache: bis zu 16 Intervalle anzeigen |
+
+### Cache-Format und Aufbewahrung
+
+SQLite-Tabelle `intervals`, ein Datensatz pro **5-Minuten-UTC-Fenster** (`interval_start` als PK, ISO `…Z`):
+
+- Mittelwerte: `power_mean_kw`, `power_sent_kw` (≥ 0), `curtailment_w`
+- `power_samples` / `limit_samples` — Anzahl gültiger Modbus-Proben im Fenster
+- `status`: `pending`, `uploaded`, `failed`, `skipped`
+- `updated_at` — letzte Änderung
+
+**Maximal 16 Intervalle** (jüngste nach `interval_start`). Bei jedem Schreiben in die DB werden ältere Zeilen gelöscht — `list_intervals.py` zeigt daher höchstens 16 Einträge (≈ 80 Minuten Historie).
+
+```bash
+python3 list_intervals.py
+python3 list_intervals.py --status pending
+```
 
 ## Schnellstart (Zähler, User `zaehler`)
 

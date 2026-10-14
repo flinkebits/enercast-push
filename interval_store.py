@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 PERIOD_MINUTES = 5
+KEEP_INTERVALS = 16
 REPO_ROOT = Path(__file__).resolve().parent
 
 STATUS_PENDING = "pending"
@@ -92,6 +93,25 @@ class IntervalStore:
         )
         self._conn.commit()
 
+    def _prune_old_intervals(self) -> None:
+        """Behält nur die KEEP_INTERVALS jüngsten Fenster (nach interval_start)."""
+        count = self._conn.execute("SELECT COUNT(*) FROM intervals").fetchone()[0]
+        if count <= KEEP_INTERVALS:
+            return
+        drop = count - KEEP_INTERVALS
+        self._conn.execute(
+            """
+            DELETE FROM intervals
+            WHERE interval_start IN (
+                SELECT interval_start FROM intervals
+                ORDER BY interval_start ASC
+                LIMIT ?
+            )
+            """,
+            (drop,),
+        )
+        self._conn.commit()
+
     def get(self, interval_start: datetime) -> sqlite3.Row | None:
         key = format_instant(interval_start)
         row = self._conn.execute(
@@ -145,7 +165,32 @@ class IntervalStore:
             ),
         )
         self._conn.commit()
+        self._prune_old_intervals()
         return True
+
+    def count_by_status(self) -> dict[str, int]:
+        rows = self._conn.execute(
+            "SELECT status, COUNT(*) AS n FROM intervals GROUP BY status"
+        ).fetchall()
+        return {row["status"]: row["n"] for row in rows}
+
+    def list_all(
+        self,
+        status: str | None = None,
+        limit: int | None = None,
+        newest_first: bool = False,
+    ) -> list[sqlite3.Row]:
+        order = "DESC" if newest_first else "ASC"
+        params: list[object] = []
+        where = ""
+        if status is not None:
+            where = "WHERE status = ?"
+            params.append(status)
+        sql = f"SELECT * FROM intervals {where} ORDER BY interval_start {order}"
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(limit)
+        return list(self._conn.execute(sql, params))
 
     def list_upload_candidates(self, include_failed: bool = True) -> list[sqlite3.Row]:
         statuses = [STATUS_PENDING]
@@ -174,6 +219,7 @@ class IntervalStore:
             (STATUS_UPLOADED, format_instant(utc_now()), key),
         )
         self._conn.commit()
+        self._prune_old_intervals()
 
     def mark_failed(self, interval_start: datetime, message: str) -> None:
         key = format_instant(interval_start)
@@ -186,3 +232,4 @@ class IntervalStore:
             (STATUS_FAILED, message[:2000], format_instant(utc_now()), key),
         )
         self._conn.commit()
+        self._prune_old_intervals()
