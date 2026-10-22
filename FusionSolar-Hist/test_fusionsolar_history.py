@@ -12,9 +12,11 @@ from fusionsolar_history import (
     DAY_MS,
     STEP_MS,
     WINDOW_MS,
+    day_end_ms,
     floor_5min_ms,
     format_watt,
     interval_labels,
+    parse_args,
     parse_instant_ms,
     watt_rows,
     window_end_ms,
@@ -89,3 +91,29 @@ class YieldTest(unittest.TestCase):
     def test_watt_format_uses_dot(self):
         self.assertEqual(format_watt(1.5), "1.5")
         self.assertEqual(format_watt(0.0), "0")
+
+
+class DayTest(unittest.TestCase):
+    def test_day_end_is_midnight_of_the_next_day(self):
+        end = day_end_ms("2026-03-08")
+        expected = int(datetime(2026, 3, 9, tzinfo=BERLIN).timestamp() * 1000)
+        self.assertEqual(end, expected)
+        self.assertEqual(end - parse_instant_ms("2026-03-08"), DAY_MS)
+
+    def test_day_end_across_dst_change_counts_wall_clock(self):
+        start = int(datetime(2026, 10, 25, tzinfo=BERLIN).timestamp() * 1000)
+        end = int(datetime(2026, 10, 26, tzinfo=BERLIN).timestamp() * 1000)
+        self.assertEqual(day_end_ms("2026-10-25"), end)
+        self.assertEqual(end - start, 25 * 3600 * 1000)
+
+
+class ArgsTest(unittest.TestCase):
+    def test_dates_are_optional(self):
+        args = parse_args([])
+        self.assertIsNone(args.start)
+        self.assertIsNone(args.end)
+
+    def test_dates_are_parsed(self):
+        args = parse_args(["--start", "2026-01-01", "--end", "2026-01-31"])
+        self.assertEqual(args.start, "2026-01-01")
+        self.assertEqual(args.end, "2026-01-31")

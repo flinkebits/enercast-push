@@ -4,11 +4,15 @@
 Der Logger liefert den kumulierten Ertrag total_yield in kWh. Die Leistung
 eines Intervalls ist die Differenz zum vorherigen 5-Minuten-Wert, in Watt.
 Spalten: Start, Ende (Europe/Berlin), Watt.
-Ende der Abfrage: 16.10.2026 einschließlich.
+
+Aufruf: fusionsolar_history.py [--start JJJJ-MM-TT] [--end JJJJ-MM-TT].
+Beide Daten liegen in Europe/Berlin, das Ende ist einschließlich.
+Standardstart ist das Netzanschlussdatum der Anlage, Standardende heute.
 """
 
 from __future__ import annotations
 
+import argparse
 import csv
 import json
 import time
@@ -30,7 +34,6 @@ STEP_MS = 5 * 60 * 1000
 DAY_MS = 24 * 3600 * 1000
 WINDOW_MS = DAY_MS - STEP_MS
 GAP_SECONDS = 61
-FINAL_END = datetime(2026, 10, 17, 0, 0, tzinfo=BERLIN)
 WATT_PER_KWH_STEP = 12 * 1000
 
 COLUMNS = ("Start", "Ende", "Watt")
@@ -69,6 +72,20 @@ def parse_instant_ms(text: str) -> int:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=BERLIN)
     return floor_5min_ms(int(parsed.timestamp() * 1000))
+
+
+def day_end_ms(text: str) -> int:
+    """0 Uhr des Folgetags (Europe/Berlin): der genannte Tag endet eingeschlossen."""
+    parsed = datetime.fromisoformat(text)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=BERLIN)
+    midnight = parsed.replace(hour=0, minute=0, second=0, microsecond=0)
+    return floor_5min_ms(int((midnight + timedelta(days=1)).timestamp() * 1000))
+
+
+def today_end_ms() -> int:
+    tomorrow = datetime.now(BERLIN).date() + timedelta(days=1)
+    return day_end_ms(tomorrow.isoformat())
 
 
 def format_watt(value: float) -> str:
@@ -296,10 +313,24 @@ def resume_state(state: dict | None, final_ms: int) -> dict | None:
     return state
 
 
-def run() -> None:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="5-Minuten-Wirkleistung des SmartLogger als CSV."
+    )
+    parser.add_argument(
+        "--start", help="Startdatum JJJJ-MM-TT, Standard: Netzanschlussdatum der Anlage"
+    )
+    parser.add_argument(
+        "--end", help="Enddatum JJJJ-MM-TT einschließlich, Standard: heute"
+    )
+    return parser.parse_args(argv)
+
+
+def run(argv: list[str] | None = None) -> None:
+    args = parse_args(argv)
     host, user, code, wanted = credentials()
     client = Client(host, user, code)
-    final_ms = int(FINAL_END.timestamp() * 1000)
+    final_ms = day_end_ms(args.end) if args.end else today_end_ms()
     state = resume_state(load_state(), final_ms)
 
     if state:
@@ -325,8 +356,12 @@ def run() -> None:
         dev_name = str(logger.get("devName") or dev_dn)
         connected = plant.get("gridConnectionDate")
         next_ms = parse_instant_ms(connected) if connected else floor_5min_ms(0)
+        if args.start:
+            next_ms = max(next_ms, parse_instant_ms(args.start))
         if next_ms >= final_ms:
-            raise SystemExit(f"Netzanschluss {connected} liegt nach dem 16.10.2026.")
+            raise SystemExit(
+                f"Start {interval_labels(next_ms)[0]} liegt nicht vor dem Ende {interval_labels(final_ms)[0]}."
+            )
         previous = None
         if CSV_PATH.is_file():
             CSV_PATH.unlink()
@@ -369,7 +404,7 @@ def run() -> None:
         )
         log(f"{label}: {len(rows)} Zeilen, Datei {CSV_PATH.name}")
 
-    log(f"Fertig bis 16.10.2026, Datei {CSV_PATH}")
+    log(f"Fertig bis {interval_labels(final_ms)[0]}, Datei {CSV_PATH}")
 
 
 if __name__ == "__main__":
