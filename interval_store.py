@@ -1,4 +1,4 @@
-"""SQLite-Cache für abgeschlossene 5-Minuten-Modbus-Intervalle."""
+"""SQLite-Cache für abgeschlossene 15-Minuten-Modbus-Intervalle."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
-PERIOD_MINUTES = 5
+PERIOD_MINUTES = 15
 KEEP_INTERVALS = 16
 REPO_ROOT = Path(__file__).resolve().parent
 
@@ -230,6 +230,19 @@ class IntervalStore:
             WHERE interval_start = ?
             """,
             (STATUS_FAILED, message[:2000], format_instant(utc_now()), key),
+        )
+        self._conn.commit()
+        self._prune_old_intervals()
+
+    def mark_skipped(self, interval_start: datetime, message: str) -> None:
+        key = format_instant(interval_start)
+        self._conn.execute(
+            """
+            UPDATE intervals
+            SET status = ?, last_error = ?, updated_at = ?
+            WHERE interval_start = ?
+            """,
+            (STATUS_SKIPPED, message[:2000], format_instant(utc_now()), key),
         )
         self._conn.commit()
         self._prune_old_intervals()

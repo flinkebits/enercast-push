@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Listet die bis zu 16 gespeicherten Modbus-5-Minuten-Intervalle aus dem Cache."""
+"""Listet die bis zu 16 gespeicherten Modbus-15-Minuten-Intervalle aus dem Cache."""
 
 from __future__ import annotations
 

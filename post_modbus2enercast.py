@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Lädt pending 5-Minuten-Intervalle aus dem Cache in die enercast-Cloud."""
+"""Lädt pending 15-Minuten-Intervalle aus dem Cache in die enercast-Cloud."""
 
 from __future__ import annotations
 
 import argparse
 import time
+from datetime import datetime
 from pathlib import Path
 
 from enercast_live import ENV_PATH, ApiError, LiveData, load_env
@@ -16,7 +17,12 @@ from interval_store import (
     utc_now,
 )
 
+
 DEFAULT_FLUSH_SECONDS = 45.0
+
+
+def on_period_grid(start: datetime) -> bool:
+    return start.minute % PERIOD_MINUTES == 0
 
 
 def log(message: str) -> None:
@@ -37,6 +43,11 @@ def flush_pending(client: LiveData, store: IntervalStore, plant_key: str) -> int
     sent = 0
     for row in rows:
         start = parse_interval_start(row["interval_start"])
+        if not on_period_grid(start):
+            reason = f"Raster nicht {PERIOD_MINUTES} min"
+            store.mark_skipped(start, reason)
+            log(f"Intervall {row['interval_start']} übersprungen: {reason}")
+            continue
         try:
             client.send(
                 plant_key,

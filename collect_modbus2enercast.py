@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Liest Modbus im 3-Sekunden-Takt, bildet 5-Minuten-UTC-Mittelwerte und schreibt sie in den Cache."""
+"""Liest Modbus im 3-Sekunden-Takt, bildet 15-Minuten-UTC-Mittelwerte und schreibt sie in den Cache."""
 
 from __future__ import annotations
 
@@ -216,7 +216,7 @@ def run_daemon(store: IntervalStore) -> None:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Modbus sammeln und 5-Min-Intervalle cachen.")
+    parser = argparse.ArgumentParser(description="Modbus sammeln und 15-Min-Intervalle cachen.")
     parser.add_argument(
         "--db",
         type=Path,

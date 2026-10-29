@@ -1,5 +1,5 @@
 [Unit]
-Description=enercast Modbus collect (5-Min-UTC Cache)
+Description=enercast Modbus collect (15-Min-UTC Cache)
 After=network-online.target
 Wants=network-online.target
 

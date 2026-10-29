@@ -1,12 +1,12 @@
 # enercast-api (Zähler / Langwieder)
 
-Live-Wirkleistung und PV-Abregelung vom Huawei-SmartLogger (Modbus TCP) in die [enercast](https://rest-api.enercast.de)-Cloud. Messung in **5-Minuten-UTC-Intervallen**, zwischengespeichert in SQLite und bei Netzausfall später nachgeladen.
+Live-Wirkleistung und PV-Abregelung vom Huawei-SmartLogger (Modbus TCP) in die [enercast](https://rest-api.enercast.de)-Cloud. Messung in **15-Minuten-UTC-Intervallen**, zwischengespeichert in SQLite und bei Netzausfall später nachgeladen.
 
 ## Komponenten
 
 | Datei | Rolle |
 |--------|--------|
-| `collect_modbus2enercast.py` | Dämon: Modbus alle 3 s, Mittelwert pro 5-Min-Fenster → Cache |
+| `collect_modbus2enercast.py` | Dämon: Modbus alle 3 s, Mittelwert pro 15-Min-Fenster → Cache |
 | `post_modbus2enercast.py` | Dämon: `pending` aus Cache → enercast API |
 | `interval_store.py` | SQLite, Intervall-Raster, Status |
 | `enercast_live.py` | API-Client (Login, Power, Abregelung) |
@@ -17,14 +17,14 @@ Live-Wirkleistung und PV-Abregelung vom Huawei-SmartLogger (Modbus TCP) in die [
 
 ### Cache-Format und Aufbewahrung
 
-SQLite-Tabelle `intervals`, ein Datensatz pro **5-Minuten-UTC-Fenster** (`interval_start` als PK, ISO `…Z`):
+SQLite-Tabelle `intervals`, ein Datensatz pro **15-Minuten-UTC-Fenster** (`interval_start` als PK, ISO `…Z`):
 
 - Mittelwerte: `power_mean_kw`, `power_sent_kw` (≥ 0), `curtailment_w`
 - `power_samples` / `limit_samples` — Anzahl gültiger Modbus-Proben im Fenster
 - `status`: `pending`, `uploaded`, `failed`, `skipped`
 - `updated_at` — letzte Änderung
 
-**Maximal 16 Intervalle** (jüngste nach `interval_start`). Bei jedem Schreiben in die DB werden ältere Zeilen gelöscht — `list_intervals.py` zeigt daher höchstens 16 Einträge (≈ 80 Minuten Historie).
+**Maximal 16 Intervalle** (jüngste nach `interval_start`). Bei jedem Schreiben in die DB werden ältere Zeilen gelöscht — `list_intervals.py` zeigt daher höchstens 16 Einträge (4 Stunden Historie).
 
 ```bash
 python3 list_intervals.py
