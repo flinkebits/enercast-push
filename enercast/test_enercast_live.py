@@ -3,7 +3,7 @@
 import unittest
 from datetime import datetime, timezone
 
-from enercast_live import (
+from libenercast import (
     LiveData,
     ceiling_watts,
     parse_start,

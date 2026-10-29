@@ -5,10 +5,10 @@ from __future__ import annotations
 
 import argparse
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
-from enercast_live import ENV_PATH, ApiError, LiveData, load_env
+from libenercast import ENV_PATH, ApiError, LiveData, load_env
 from interval_store import (
     PERIOD_MINUTES,
     IntervalStore,
@@ -63,10 +63,11 @@ def flush_pending(client: LiveData, store: IntervalStore, plant_key: str) -> int
             continue
         store.mark_uploaded(start)
         sent += 1
+        end = start + timedelta(minutes=PERIOD_MINUTES)
         log(
-            f"uploaded {row['interval_start']} "
+            f"uploaded {row['interval_start']} - {end.strftime('%H:%M')} "
             f"Leistung={row['power_sent_kw']} kW "
-            f"Abregelung={row['curtailment_w']:.0f} W"
+            f"Abregelung={row['curtailment_w'] / 1000:.3f} kW"
         )
     return sent
 

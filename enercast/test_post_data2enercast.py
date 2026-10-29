@@ -2,13 +2,15 @@
 
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from datetime import datetime, timezone
+from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
-from enercast_live import LiveData
+from libenercast import LiveData
 from interval_store import STATUS_PENDING, IntervalStore
-from post_modbus2enercast import flush_pending
+from post_data2enercast import flush_pending
 
 
 class FlushPendingTest(unittest.TestCase):
@@ -34,15 +36,21 @@ class FlushPendingTest(unittest.TestCase):
     def test_flush_marks_uploaded(self):
         client = LiveData("user", "secret")
         client.send = lambda *args, **kwargs: self.start  # type: ignore[method-assign]
-        count = flush_pending(client, self.store, "Feld0")
+        buf = StringIO()
+        with redirect_stdout(buf):
+            count = flush_pending(client, self.store, "Feld0")
         self.assertEqual(count, 1)
+        self.assertIn(
+            "uploaded 2026-10-04T10:00:00Z - 10:15 Leistung=1.5 kW Abregelung=0.200 kW",
+            buf.getvalue(),
+        )
         row = self.store.get(self.start)
         assert row is not None
         self.assertEqual(row["status"], "uploaded")
 
     @patch.dict("os.environ", {}, clear=False)
     def test_run_once_uses_env_plant_key(self):
-        from post_modbus2enercast import run_once
+        from post_data2enercast import run_once
 
         client = LiveData("user", "secret")
         seen = {}
@@ -52,8 +60,8 @@ class FlushPendingTest(unittest.TestCase):
             seen["kwargs"] = kwargs
             return self.start
 
-        with patch("post_modbus2enercast.LiveData.from_env", return_value=client):
-            with patch("post_modbus2enercast.plant_key_from_env", return_value="Feld0"):
+        with patch("post_data2enercast.LiveData.from_env", return_value=client):
+            with patch("post_data2enercast.plant_key_from_env", return_value="Feld0"):
                 client.send = capture_send  # type: ignore[method-assign]
                 count = run_once(self.store)
         self.assertEqual(count, 1)

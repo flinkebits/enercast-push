@@ -5,7 +5,7 @@ import argparse
 import sys
 import urllib.error
 
-from enercast_live import ApiError, LiveData
+from libenercast import ApiError, LiveData
 
 
 def main():

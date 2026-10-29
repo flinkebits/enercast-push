@@ -7,9 +7,9 @@ Live-Wirkleistung und PV-Abregelung vom Huawei-SmartLogger (Modbus TCP) in die [
 | Datei | Rolle |
 |--------|--------|
 | `collect_modbus2enercast.py` | Dämon: Modbus alle 3 s, Mittelwert pro 15-Min-Fenster → Cache |
-| `post_modbus2enercast.py` | Dämon: `pending` aus Cache → enercast API |
+| `post_data2enercast.py` | Dämon: `pending` aus Cache → enercast API |
 | `interval_store.py` | SQLite, Intervall-Raster, Status |
-| `enercast_live.py` | API-Client (Login, Power, Abregelung) |
+| `libenercast.py` | API-Client (Login, Power, Abregelung) |
 | `read_modbus_power.py` | Debug: Modbus-Werte jede Sekunde auf der Konsole |
 | `example_send.py` | Manuell einen Wert senden |
 | `list_assets.py` | Anlagen des Accounts auflisten |
@@ -33,20 +33,22 @@ python3 list_intervals.py --status pending
 
 ## Schnellstart (Zähler, User `zaehler`)
 
-Installationspfad: **`/home/zaehler/enercast`**
+Checkout: **`/home/zaehler/enercast`**  
+Skripte: **`/home/zaehler/enercast/enercast`**
 
 ```bash
 cd /home/zaehler/enercast
 git pull
+cd enercast
 cp .env.example .env   # einmalig: Zugangsdaten eintragen
 python3 -m unittest
 ```
 
-Zum Testen (Vordergrund):
+Zum Testen (Vordergrund, im Skriptverzeichnis):
 
 ```bash
 python3 collect_modbus2enercast.py
-python3 post_modbus2enercast.py --once
+python3 post_data2enercast.py --once
 ```
 
 - **Cache:** `data/modbus_intervals.db` (Ordner `data/` wird automatisch angelegt, liegt in `.gitignore`)
@@ -57,9 +59,10 @@ Modbus-Ziel (SmartLogger) steht in `collect_modbus2enercast.py`: `HOST`, `PORT`.
 
 ## Hintergrunddienst (systemd)
 
-Unit-Dateien liegen unter `deploy/`. Einmalig als root:
+Unit-Dateien liegen unter `enercast/deploy/`. Einmalig als root, aus dem Skriptverzeichnis:
 
 ```bash
+cd /home/zaehler/enercast/enercast
 sudo cp deploy/enercast-modbus-collect.service deploy/enercast-modbus-post.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now enercast-modbus-collect enercast-modbus-post
