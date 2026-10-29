@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Liest Modbus im 3-Sekunden-Takt, bildet 5-Minuten-UTC-Mittelwerte und schreibt sie in den Cache."""
+"""Liest Modbus-Werte am Huawei-Logger im 
+Sekunden-Takt, bildet 5-Minuten-UTC-Mittelwerte und 
+schreibt sie in den Cache."""
 
 from __future__ import annotations
 
@@ -22,7 +24,7 @@ from interval_store import (
     utc_now,
 )
 
-HOST = "172.20.5.110"
+HOST = "172.20.5.110"  # Logger von Huawei
 PORT = 502
 UNIT_ID = 0
 READ_FUNCTION = 3
