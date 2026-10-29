@@ -65,7 +65,7 @@ def flush_pending(client: LiveData, store: IntervalStore, plant_key: str) -> int
         sent += 1
         end = start + timedelta(minutes=PERIOD_MINUTES)
         log(
-            f"uploaded {row['interval_start']} - {end.strftime('%H:%M')} "
+            f"uploaded {row['interval_start']} -{end.strftime('%H:%M')} "
             f"Leistung={row['power_sent_kw']} kW "
             f"Abregelung={row['curtailment_w'] / 1000:.3f} kW"
         )
