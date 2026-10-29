@@ -81,12 +81,6 @@ def require_period(period_minutes):
     return period_minutes
 
 
-def period_token(period_minutes):
-    if period_minutes == 60:
-        return "PT1H"
-    return f"PT{period_minutes}M"
-
-
 def parse_start(start, now, period_minutes=1):
     period_minutes = require_period(period_minutes)
     if start is None:
@@ -113,10 +107,8 @@ def parse_start(start, now, period_minutes=1):
     if parsed.tzinfo is None or parsed.utcoffset() != timedelta(0):
         raise ValueError("start muss UTC sein.")
     parsed = parsed.astimezone(timezone.utc)
-    if parsed.second or parsed.microsecond or parsed.minute % period_minutes:
-        if period_minutes == 1:
-            raise ValueError("start muss auf einer vollen Minute liegen.")
-        raise ValueError(f"start muss auf einem {period_minutes}-Minuten-Raster liegen.")
+    if parsed.second or parsed.microsecond:
+        raise ValueError("start muss auf einer vollen Minute liegen.")
     return parsed.replace(second=0, microsecond=0)
 
 
@@ -187,16 +179,23 @@ class LiveData:
             "ds.provider": self.account_id,
             "ds.name": "generation",
         }
+        # Expanded-Format: Das Intervall wird explizit als "start/end" übergeben.
+        # Das compact-Format mit periodicity ordnet enercast der letzten
+        # Raster-Scheibe vor Periodenende zu (z. B. 11:25-11:30 statt 11:15-11:30).
+        interval_key = (
+            f"{format_instant(start_at)}/"
+            f"{format_instant(start_at + timedelta(minutes=period_minutes))}"
+        )
         body = {
-            "format": "compact-values",
+            "format": "expanded-intervals-to-values",
             "quantity-name": "P",
             "unit": "W",
-            "periodicity": [f"R/{period_token(period_minutes)}"],
+            "periodicity": [],
             "start": format_instant(start_at),
             "interval-type": "[,[",
             "time-zone": "UTC",
             "instantaneous": False,
-            "values": [power_w],
+            "intervals-to-values": {interval_key: power_w},
         }
         self._request(
             "POST",

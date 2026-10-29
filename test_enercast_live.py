@@ -107,10 +107,13 @@ class ValidationTest(unittest.TestCase):
             datetime(2026, 10, 4, 10, 15, tzinfo=timezone.utc),
         )
 
-    def test_off_grid_quarter_rejected(self):
+    def test_ten_minute_stub_off_grid_accepted(self):
+        # Stummel-Intervalle starten auch ab :05/:20/… und müssen durchgehen.
         now = datetime(2026, 10, 4, 10, 17, tzinfo=timezone.utc)
-        with self.assertRaises(ValueError):
-            parse_start("2026-10-04T10:07:00Z", now, 15)
+        self.assertEqual(
+            parse_start("2026-10-04T10:05:00Z", now, 10),
+            datetime(2026, 10, 4, 10, 5, tzinfo=timezone.utc),
+        )
 
     def test_period_must_divide_hour(self):
         now = datetime(2026, 10, 4, 10, 17, tzinfo=timezone.utc)
@@ -128,9 +131,13 @@ class ValidationTest(unittest.TestCase):
         start = datetime(2026, 10, 4, 10, 0, tzinfo=timezone.utc)
         client._post_power("token", "Feld0", 1000.0, start, 15)
         client._post_curtailment("token", "Feld0", 500.0, start, 15)
-        self.assertEqual(captured[0]["periodicity"], ["R/PT15M"])
+        self.assertEqual(captured[0]["format"], "expanded-intervals-to-values")
+        self.assertEqual(captured[0]["periodicity"], [])
         self.assertEqual(captured[0]["start"], "2026-10-04T10:00:00Z")
-        self.assertEqual(captured[0]["values"], [1000.0])
+        self.assertEqual(
+            captured[0]["intervals-to-values"],
+            {"2026-10-04T10:00:00Z/2026-10-04T10:15:00Z": 1000.0},
+        )
         self.assertEqual(captured[1]["start-instant"], "2026-10-04T10:00:00Z")
         self.assertEqual(captured[1]["end-instant"], "2026-10-04T10:15:00Z")
 
@@ -145,7 +152,11 @@ class ValidationTest(unittest.TestCase):
         start = datetime(2026, 10, 4, 8, 45, tzinfo=timezone.utc)
         client._post_power("token", "Feld0", 1000.0, start, 1)
         client._post_curtailment("token", "Feld0", 500.0, start, 1)
-        self.assertEqual(captured[0]["periodicity"], ["R/PT1M"])
+        self.assertEqual(captured[0]["format"], "expanded-intervals-to-values")
+        self.assertEqual(
+            captured[0]["intervals-to-values"],
+            {"2026-10-04T08:45:00Z/2026-10-04T08:46:00Z": 1000.0},
+        )
         self.assertEqual(captured[1]["end-instant"], "2026-10-04T08:46:00Z")
 
     def test_invalid_values_do_not_login(self):
@@ -164,7 +175,7 @@ class ValidationTest(unittest.TestCase):
                 "Feld0",
                 power=1,
                 curtailment_w=0,
-                start="2026-10-04T10:07:00Z",
+                start="2026-10-04T10:07:30Z",
                 period_minutes=15,
             )
 

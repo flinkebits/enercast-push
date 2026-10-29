@@ -56,7 +56,7 @@ class FlushPendingTest(unittest.TestCase):
 
     def test_full_window_sent_as_15min_average(self):
         for minute in (0, 5, 10):
-            self.save(minute, power=1.0 + minute)
+            self.save(minute, power=1.0 + minute / 5)
         now = self.window + timedelta(minutes=16)
         count = flush_pending(self.make_client(), self.store, "Feld0", now=now)
         self.assertEqual(count, 3)
@@ -85,7 +85,7 @@ class FlushPendingTest(unittest.TestCase):
     def test_stub_of_two_sent_as_10min_average(self):
         self.save(5, power=2.0, curtailment=100.0)
         self.save(10, power=4.0, curtailment=300.0)
-        now = self.window + timedelta(minutes=16)
+        now = self.window + timedelta(minutes=18)
         count = flush_pending(self.make_client(), self.store, "Feld0", now=now)
         self.assertEqual(count, 2)
         self.assertEqual(len(self.sends), 1)
@@ -97,7 +97,7 @@ class FlushPendingTest(unittest.TestCase):
 
     def test_stub_of_one_sent_as_5min(self):
         self.save(10)
-        now = self.window + timedelta(minutes=16)
+        now = self.window + timedelta(minutes=18)
         count = flush_pending(self.make_client(), self.store, "Feld0", now=now)
         self.assertEqual(count, 1)
         send = self.sends[0]
@@ -109,7 +109,7 @@ class FlushPendingTest(unittest.TestCase):
         for minute in (0, 5, 10):
             self.save(minute)
         self.save(15)
-        now = self.window + timedelta(minutes=31)
+        now = self.window + timedelta(minutes=34)
         count = flush_pending(self.make_client(), self.store, "Feld0", now=now)
         self.assertEqual(count, 4)
         self.assertEqual(len(self.sends), 2)
