@@ -1,7 +1,11 @@
 """Prüfungen und Intervallberechnung ohne Netz."""
 
+import contextlib
+import io
+import json
 import unittest
 from datetime import datetime, timezone
+from unittest.mock import patch
 
 from libenercast import (
     LiveData,
@@ -147,6 +151,69 @@ class ValidationTest(unittest.TestCase):
         client._post_curtailment("token", "Feld0", 500.0, start, 1)
         self.assertEqual(captured[0]["periodicity"], ["R/PT1M"])
         self.assertEqual(captured[1]["end-instant"], "2026-10-04T08:46:00Z")
+
+    def test_send_logs_exact_post_body(self):
+        client = LiveData("user", "secret", account_id="zaehler")
+        client._login = lambda: "token"
+        client._get_asset = lambda token, key: {"rated-power": 10_000_000}
+        sent = []
+
+        class Response:
+            status = 204
+
+            def read(self):
+                return b""
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+        def fake_urlopen(req):
+            sent.append(req.data.decode())
+            return Response()
+
+        start = datetime(2026, 10, 30, 6, 30, tzinfo=timezone.utc)
+        buf = io.StringIO()
+        with patch("libenercast.urllib.request.urlopen", fake_urlopen):
+            with contextlib.redirect_stdout(buf):
+                client.send(
+                    "Feld0",
+                    power=141.622,
+                    curtailment_w=1221374,
+                    power_unit="kW",
+                    start=start,
+                    period_minutes=15,
+                )
+        text = buf.getvalue()
+        self.assertEqual(
+            [json.loads(payload) for payload in sent],
+            [
+                {
+                    "format": "compact-values",
+                    "quantity-name": "P",
+                    "unit": "W",
+                    "periodicity": ["R/PT15M"],
+                    "start": "2026-10-30T06:30:00Z",
+                    "interval-type": "[,[",
+                    "time-zone": "UTC",
+                    "instantaneous": False,
+                    "values": [141622.0],
+                },
+                {
+                    "value": 1221374.0,
+                    "unit": "W",
+                    "start-instant": "2026-10-30T06:30:00Z",
+                    "end-instant": "2026-10-30T06:45:00Z",
+                    "time-zone": "UTC",
+                },
+            ],
+        )
+        for payload in sent:
+            self.assertIn(payload, text)
+        self.assertEqual(text.count("HTTP 204"), 2)
+        self.assertNotIn("secret", text)
 
     def test_invalid_values_do_not_login(self):
         client = LiveData("user", "secret")

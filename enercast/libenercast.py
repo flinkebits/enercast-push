@@ -244,11 +244,27 @@ class LiveData:
         if token:
             headers["Authorization"] = f"Bearer {token}"
         req = urllib.request.Request(url, data=data, headers=headers, method=method)
+        trace = data is not None and not path.endswith("/auth")
+        if trace:
+            print(
+                f"{format_instant(datetime.now(timezone.utc))} POST {url[len(BASE_URL):]} {data.decode()}",
+                flush=True,
+            )
         try:
             with urllib.request.urlopen(req) as response:
                 raw = response.read()
+                if trace:
+                    print(
+                        f"{format_instant(datetime.now(timezone.utc))} HTTP {response.status}",
+                        flush=True,
+                    )
                 return json.loads(raw) if raw else None
         except urllib.error.HTTPError as exc:
+            if trace:
+                print(
+                    f"{format_instant(datetime.now(timezone.utc))} HTTP {exc.code}",
+                    flush=True,
+                )
             raw = exc.read().decode(errors="replace")
             message = raw
             try:
