@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
-"""5-Minuten-Wirkleistung des SmartLogger als eine CSV.
+"""Wirkleistung des SmartLogger als eine CSV.
 
 Der Logger liefert den kumulierten Ertrag total_yield in kWh. Die Leistung
 eines Intervalls ist die Differenz zum vorherigen 5-Minuten-Wert, in Watt.
+Mit --interval 15 wird daraus der Mittelwert dreier aufeinanderfolgender
+5-Minuten-Werte; der Start liegt dann auf Minute 0, 15, 30 oder 45.
 Spalten: Start, Ende (Europe/Berlin), Watt.
 
-Aufruf: fusionsolar_history.py [--start JJJJ-MM-TT] [--end JJJJ-MM-TT].
+Aufruf: fusionsolar_history.py [--interval 5|15] [--start JJJJ-MM-TT] [--end JJJJ-MM-TT].
 Beide Daten liegen in Europe/Berlin, das Ende ist einschließlich.
 Standardstart ist das Netzanschlussdatum der Anlage, Standardende heute.
+Standardintervall ist 5 Minuten, Datei data/leistung.csv.
+15 Minuten schreibt data/leistung-15min.csv.
 """
 
 from __future__ import annotations
@@ -31,6 +35,7 @@ STATE_PATH = OUT_DIR / "state.json"
 
 LOGGER = 63
 STEP_MS = 5 * 60 * 1000
+QUARTER_MS = 3 * STEP_MS
 DAY_MS = 24 * 3600 * 1000
 WINDOW_MS = DAY_MS - STEP_MS
 GAP_SECONDS = 61
@@ -93,22 +98,27 @@ def format_watt(value: float) -> str:
     return text if text not in ("", "-0") else "0"
 
 
-def interval_labels(start_ms: int) -> tuple[str, str]:
+def interval_labels(start_ms: int, minutes: int = 5) -> tuple[str, str]:
     start = datetime.fromtimestamp(start_ms / 1000, timezone.utc).astimezone(BERLIN)
-    end = start + timedelta(minutes=5)
-    pattern = "%Y-%m-%d %H:%M"
+    end = start + timedelta(minutes=minutes)
+    pattern = "%Y-%m-%d %H:%M:%S"
     return start.strftime(pattern), end.strftime(pattern)
 
 
-def watt_rows(
+def format_power_row(start_ms: int, watts: float, minutes: int) -> dict[str, str]:
+    label_start, label_end = interval_labels(start_ms, minutes)
+    return {"Start": label_start, "Ende": label_end, "Watt": format_watt(watts)}
+
+
+def power_intervals(
     samples: list[tuple[int, float | None]],
     previous: tuple[int, float] | None,
     start_ms: int,
     end_ms: int,
-) -> tuple[list[dict[str, str]], tuple[int, float] | None]:
-    """Leistung aus aufeinanderfolgenden total_yield-Werten.
+) -> tuple[list[tuple[int, float]], tuple[int, float] | None]:
+    """5-Minuten-Leistung aus aufeinanderfolgenden total_yield-Werten.
 
-    Eine Zeile entsteht nur bei genau fünf Minuten Abstand und nicht fallendem
+    Ein Intervall entsteht nur bei genau fünf Minuten Abstand und nicht fallendem
     Zähler. previous ist der letzte Zählerstand vor diesem Fenster.
     """
     points: list[tuple[int, float]] = []
@@ -123,7 +133,7 @@ def watt_rows(
             continue
         points.append((slot, yield_kwh))
 
-    rows = []
+    series = []
     for earlier, later in zip(points, points[1:]):
         prev_ms, prev_yield = earlier
         cur_ms, cur_yield = later
@@ -131,11 +141,51 @@ def watt_rows(
             continue
         if prev_ms < start_ms or prev_ms >= end_ms:
             continue
-        watts = (cur_yield - prev_yield) * WATT_PER_KWH_STEP
-        label_start, label_end = interval_labels(prev_ms)
-        rows.append({"Start": label_start, "Ende": label_end, "Watt": format_watt(watts)})
+        series.append((prev_ms, (cur_yield - prev_yield) * WATT_PER_KWH_STEP))
     last = points[-1] if points else previous
-    return rows, last
+    return series, last
+
+
+def watt_rows(
+    samples: list[tuple[int, float | None]],
+    previous: tuple[int, float] | None,
+    start_ms: int,
+    end_ms: int,
+) -> tuple[list[dict[str, str]], tuple[int, float] | None]:
+    series, last = power_intervals(samples, previous, start_ms, end_ms)
+    return [format_power_row(start, watts, 5) for start, watts in series], last
+
+
+def complete_quarters(
+    pending: list[tuple[int, float]],
+    rows: list[tuple[int, float]],
+) -> tuple[list[tuple[int, float]], list[tuple[int, float]]]:
+    """Mittelwert je Viertelstunde aus genau drei 5-Minuten-Leistungen.
+
+    Start ist Minute 0, 15, 30 oder 45. Eine unvollständige Viertelstunde am
+    Ende bleibt pending, damit sie im nächsten Fenster fertig wird. Lücken
+    davor fallen weg.
+    """
+    points = list(pending) + list(rows)
+    if not points:
+        return [], []
+    grouped: dict[int, dict[int, float]] = {}
+    for start_ms, watts in points:
+        quarter = start_ms - (start_ms % QUARTER_MS)
+        grouped.setdefault(quarter, {})[start_ms - quarter] = watts
+    last = max(grouped)
+    done = []
+    still: list[tuple[int, float]] = []
+    offsets = (0, STEP_MS, 2 * STEP_MS)
+    for quarter in sorted(grouped):
+        found = grouped[quarter]
+        full = all(offset in found for offset in offsets)
+        if quarter == last and not full:
+            still = [(quarter + offset, found[offset]) for offset in sorted(found)]
+            continue
+        if full:
+            done.append((quarter, sum(found[offset] for offset in offsets) / 3))
+    return done, still
 
 
 def log(message: str) -> None:
@@ -272,21 +322,27 @@ def history(client: Client, dev_dn: str, start_ms: int, end_ms: int) -> list[tup
     return samples
 
 
-def load_state() -> dict | None:
-    if not STATE_PATH.is_file():
+def output_paths(interval: int) -> tuple[Path, Path]:
+    if interval == 15:
+        return OUT_DIR / "leistung-15min.csv", OUT_DIR / "state-15min.json"
+    return CSV_PATH, STATE_PATH
+
+
+def load_state(path: Path = STATE_PATH) -> dict | None:
+    if not path.is_file():
         return None
-    return json.loads(STATE_PATH.read_text())
+    return json.loads(path.read_text())
 
 
-def save_state(state: dict) -> None:
+def save_state(state: dict, path: Path = STATE_PATH) -> None:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    STATE_PATH.write_text(json.dumps(state, indent=2))
+    path.write_text(json.dumps(state, indent=2))
 
 
-def append_rows(rows: list[dict[str, str]]) -> None:
+def append_rows(rows: list[dict[str, str]], path: Path = CSV_PATH) -> None:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    new_file = not CSV_PATH.is_file() or CSV_PATH.stat().st_size == 0
-    with CSV_PATH.open("a", newline="") as handle:
+    new_file = not path.is_file() or path.stat().st_size == 0
+    with path.open("a", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=COLUMNS)
         if new_file:
             writer.writeheader()
@@ -315,7 +371,14 @@ def resume_state(state: dict | None, final_ms: int) -> dict | None:
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="5-Minuten-Wirkleistung des SmartLogger als CSV."
+        description="Wirkleistung des SmartLogger als CSV, in 5- oder 15-Minuten-Intervallen."
+    )
+    parser.add_argument(
+        "--interval",
+        type=int,
+        choices=(5, 15),
+        default=5,
+        help="Intervall in Minuten. Bei 15 ist Watt der Mittelwert dreier 5-Minuten-Werte",
     )
     parser.add_argument(
         "--start", help="Startdatum JJJJ-MM-TT, Standard: Netzanschlussdatum der Anlage"
@@ -328,10 +391,27 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def run(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
+    interval = args.interval
+    csv_file, state_file = output_paths(interval)
     host, user, code, wanted = credentials()
     client = Client(host, user, code)
     final_ms = day_end_ms(args.end) if args.end else today_end_ms()
-    state = resume_state(load_state(), final_ms)
+    state = resume_state(load_state(state_file), final_ms)
+    pending: list[tuple[int, float]] = []
+
+    def checkpoint(at_ms: int, prev: tuple[int, float] | None) -> dict:
+        saved = {
+            "plant_name": plant_name,
+            "dev_dn": dev_dn,
+            "dev_name": dev_name,
+            "next_ms": at_ms,
+            "end_ms": final_ms,
+            "prev_ms": None if prev is None else prev[0],
+            "prev_yield": None if prev is None else prev[1],
+        }
+        if interval == 15:
+            saved["pending"] = [[start_ms, watts] for start_ms, watts in pending]
+        return saved
 
     if state:
         plant_name = state["plant_name"]
@@ -341,6 +421,8 @@ def run(argv: list[str] | None = None) -> None:
         previous = None
         if state.get("prev_ms") is not None and state.get("prev_yield") is not None:
             previous = (int(state["prev_ms"]), float(state["prev_yield"]))
+        if interval == 15:
+            pending = [(int(item[0]), float(item[1])) for item in state.get("pending") or []]
         log(f"Fortsetzung {plant_name}, {dev_name} ab {interval_labels(next_ms)[0]}")
         client.login()
     else:
@@ -363,20 +445,10 @@ def run(argv: list[str] | None = None) -> None:
                 f"Start {interval_labels(next_ms)[0]} liegt nicht vor dem Ende {interval_labels(final_ms)[0]}."
             )
         previous = None
-        if CSV_PATH.is_file():
-            CSV_PATH.unlink()
+        if csv_file.is_file():
+            csv_file.unlink()
         log(f"Anlage {plant_name}, SmartLogger {dev_name} ({dev_dn})")
-        save_state(
-            {
-                "plant_name": plant_name,
-                "dev_dn": dev_dn,
-                "dev_name": dev_name,
-                "next_ms": next_ms,
-                "end_ms": final_ms,
-                "prev_ms": None,
-                "prev_yield": None,
-            }
-        )
+        save_state(checkpoint(next_ms, previous), state_file)
 
     while next_ms < final_ms:
         chunk_end = window_end_ms(next_ms, final_ms)
@@ -385,26 +457,21 @@ def run(argv: list[str] | None = None) -> None:
             samples = history(client, dev_dn, next_ms, chunk_end)
         except FusionSolarError as exc:
             if exc.fail_code in QUOTA_CODES:
-                log(f"Kontingent aufgebraucht, CSV bleibt bei {CSV_PATH}")
+                log(f"Kontingent aufgebraucht, CSV bleibt bei {csv_file}")
                 return
             raise
-        rows, previous = watt_rows(samples, previous, next_ms, chunk_end)
-        append_rows(rows)
+        series, previous = power_intervals(samples, previous, next_ms, chunk_end)
+        if interval == 15:
+            series, pending = complete_quarters(pending, series)
+            rows = [format_power_row(start_ms, watts, 15) for start_ms, watts in series]
+        else:
+            rows = [format_power_row(start_ms, watts, 5) for start_ms, watts in series]
+        append_rows(rows, csv_file)
         next_ms = chunk_end
-        save_state(
-            {
-                "plant_name": plant_name,
-                "dev_dn": dev_dn,
-                "dev_name": dev_name,
-                "next_ms": next_ms,
-                "end_ms": final_ms,
-                "prev_ms": None if previous is None else previous[0],
-                "prev_yield": None if previous is None else previous[1],
-            }
-        )
-        log(f"{label}: {len(rows)} Zeilen, Datei {CSV_PATH.name}")
+        save_state(checkpoint(next_ms, previous), state_file)
+        log(f"{label}: {len(rows)} Zeilen, Datei {csv_file.name}")
 
-    log(f"Fertig bis {interval_labels(final_ms)[0]}, Datei {CSV_PATH}")
+    log(f"Fertig bis {interval_labels(final_ms)[0]}, Datei {csv_file}")
 
 
 if __name__ == "__main__":
