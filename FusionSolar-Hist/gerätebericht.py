@@ -489,11 +489,7 @@ def _with_unit(value: str, unit: str) -> str:
     return value if unit in ("", "—") else f"{value} {unit}"
 
 
-def inverter_parameter_grid(data_item_map: dict) -> list[list[str]]:
-    """PV-Strings zuerst, numerisch, Spannung und Strom eines Strings in einer Zeile.
-
-    Danach die übrigen Parameter, ebenfalls zu zweit je Zeile.
-    """
+def _pv_strings(data_item_map: dict) -> tuple[dict[int, dict[str, object]], dict]:
     strings: dict[int, dict[str, object]] = {}
     rest = {}
     for key, value in data_item_map.items():
@@ -504,20 +500,32 @@ def inverter_parameter_grid(data_item_map: dict) -> list[list[str]]:
             strings.setdefault(int(match.group(1)), {})[key[-1]] = value
             continue
         rest[key] = value
-    grid = []
+    return strings, rest
+
+
+def string_detail_rows(data_item_map: dict) -> list[list[str]]:
+    """Eine Zeile je PV-String, numerisch: PV1, Spannung, Strom."""
+    strings, _rest = _pv_strings(data_item_map)
+    rows = []
     for number in sorted(strings):
         side = strings[number]
         voltage = side.get("u")
         current = side.get("i")
-        grid.append([
-            f"PV-String {number} Spannung",
-            "" if voltage is None else _with_unit(format_value(voltage), "V"),
-            f"PV-String {number} Strom",
-            "" if current is None else _with_unit(format_value(current), "A"),
+        rows.append([
+            f"PV{number}",
+            "—" if voltage is None else format_value(voltage),
+            "—" if current is None else format_value(current),
         ])
+    return rows
+
+
+def inverter_parameter_grid(data_item_map: dict) -> list[list[str]]:
+    """Übrige Wechselrichter-Parameter, ohne die PV-Strings, zu zweit je Zeile."""
+    _strings, rest = _pv_strings(data_item_map)
     tail = []
     for label, value, unit in parameter_rows(rest):
         tail.append((label, _with_unit(value, unit)))
+    grid = []
     for index in range(0, len(tail), 2):
         left = tail[index]
         right = tail[index + 1] if index + 1 < len(tail) else ("", "")
@@ -772,6 +780,20 @@ def write_plant(pdf: ReportPDF, entry: dict) -> None:
             )
             pdf.ln(1)
         raw = kpi.get(dev_id, {})
+        if compact:
+            strings = string_detail_rows(raw)
+            if strings:
+                write_text(pdf, "Stringdetails", 11, bold=True, color=PETROL, line=5)
+                pdf.ln(0.4)
+                draw_table(
+                    pdf,
+                    [["String", "Spannung (V)", "Strom (A)"], *strings],
+                    (1.1, 1.6, 1.6),
+                    ("LEFT", "RIGHT", "RIGHT"),
+                    size_pt=INVERTER_TABLE_PT,
+                    line_height=3.5,
+                    padding=0.55,
+                )
         grid = inverter_parameter_grid(raw) if compact else parameter_grid(parameter_rows(raw))
         if grid:
             draw_table(
