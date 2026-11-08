@@ -29,6 +29,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from fpdf import FPDF
+from fpdf.enums import CellBordersLayout
 from fpdf.fonts import FontFace
 
 BERLIN = ZoneInfo("Europe/Berlin")
@@ -81,6 +82,7 @@ UNITS = {
     "ac_total_discharge_energy": "kWh",
     "total_charge": "kWh",
     "total_discharge": "kWh",
+    "insulation_resistance": "MΩ",
 }
 LABELS = {
     "active_power": "Wirkleistung",
@@ -103,6 +105,7 @@ LABELS = {
     "ac_total_discharge_energy": "AC-Entladeenergie gesamt",
     "total_charge": "Gesamtladung",
     "total_discharge": "Gesamtentladung",
+    "insulation_resistance": "Isolationswiderstand",
 }
 STATE_LABELS = {
     512: "netzparallel",
@@ -263,14 +266,26 @@ def dev_type(dev: dict) -> int:
         return -1
 
 
+def device_name(dev: dict) -> str:
+    return str(dev.get("devName") or dev.get("devDn") or dev.get("id") or "")
+
+
+def devices_by_name(dev_list: list[dict]) -> list[dict]:
+    """Geräte alphabetisch nach Name, ohne Groß-/Kleinschreibung."""
+    return sorted(dev_list, key=lambda dev: device_name(dev).casefold())
+
+
 def group_devices(dev_list: list[dict]) -> list[tuple[int, list[dict]]]:
-    """Geräte nach Typ gruppiert: zuerst Logger, dann Wechselrichter, dann Rest."""
+    """Geräte nach Typ gruppiert: zuerst Logger, dann Wechselrichter, dann Rest.
+
+    Innerhalb eines Typs nach Name.
+    """
     groups: dict[int, list[dict]] = {}
     for dev in dev_list:
         groups.setdefault(dev_type(dev), []).append(dev)
     order = [t for t in PARAM_TYPES if t in groups]
     order += sorted(t for t in groups if t not in PARAM_TYPES)
-    return [(t, groups[t]) for t in order]
+    return [(t, devices_by_name(groups[t])) for t in order]
 
 
 def real_kpi(client: Client, type_id: int, dev_ids: list[str]) -> dict[str, dict]:
@@ -470,6 +485,46 @@ def plant_heading(plant: dict) -> str:
     return str(plant.get("plantName") or plant.get("plantCode") or "Anlage")
 
 
+def _with_unit(value: str, unit: str) -> str:
+    return value if unit in ("", "—") else f"{value} {unit}"
+
+
+def inverter_parameter_grid(data_item_map: dict) -> list[list[str]]:
+    """PV-Strings zuerst, numerisch, Spannung und Strom eines Strings in einer Zeile.
+
+    Danach die übrigen Parameter, ebenfalls zu zweit je Zeile.
+    """
+    strings: dict[int, dict[str, object]] = {}
+    rest = {}
+    for key, value in data_item_map.items():
+        match = re.fullmatch(r"pv(\d+)_[ui]", key)
+        if match:
+            if value is None:
+                continue
+            strings.setdefault(int(match.group(1)), {})[key[-1]] = value
+            continue
+        rest[key] = value
+    grid = []
+    for number in sorted(strings):
+        side = strings[number]
+        voltage = side.get("u")
+        current = side.get("i")
+        grid.append([
+            f"PV-String {number} Spannung",
+            "" if voltage is None else _with_unit(format_value(voltage), "V"),
+            f"PV-String {number} Strom",
+            "" if current is None else _with_unit(format_value(current), "A"),
+        ])
+    tail = []
+    for label, value, unit in parameter_rows(rest):
+        tail.append((label, _with_unit(value, unit)))
+    for index in range(0, len(tail), 2):
+        left = tail[index]
+        right = tail[index + 1] if index + 1 < len(tail) else ("", "")
+        grid.append([left[0], left[1], right[0], right[1]])
+    return grid
+
+
 def parameter_grid(rows: list[tuple[str, str, str]]) -> list[list[str]]:
     """Parametertabelle zweispaltig: links und rechts je Bezeichnung und Wert.
 
@@ -477,8 +532,7 @@ def parameter_grid(rows: list[tuple[str, str, str]]) -> list[list[str]]:
     """
     cells = []
     for label, value, unit in rows:
-        shown = value if unit in ("", "—") else f"{value} {unit}"
-        cells.append((label, shown))
+        cells.append((label, _with_unit(value, unit)))
     grid = []
     for index in range(0, len(cells), 2):
         left = cells[index]
@@ -578,11 +632,19 @@ def draw_table(
     size_pt: float = TABLE_PT,
     line_height: float = 4.8,
     padding: float = 1.4,
+    gap_mm: float = 0,
 ) -> None:
     pdf.set_font("DejaVu", "", size_pt)
     pdf.set_text_color(*INK)
     pdf.set_draw_color(*RULE)
     pdf.set_line_width(0.2)
+    if gap_mm:
+        half = (pdf.epw - gap_mm) / 2
+        label_w = half * 46 / 89
+        value_w = half - label_w
+        col_widths = (label_w, value_w, gap_mm, label_w, value_w)
+        aligns = ("LEFT", "RIGHT", "CENTER", "LEFT", "RIGHT")
+    gap_face = FontFace(fill_color=(255, 255, 255))
     with pdf.table(
         headings_style=table_headings(size_pt),
         cell_fill_color=ZEBRA,
@@ -595,7 +657,16 @@ def draw_table(
         repeat_headings=1,
     ) as table:
         for row in rows:
-            table.row([str(cell) for cell in row])
+            if not gap_mm:
+                table.row([str(cell) for cell in row])
+                continue
+            built = table.row()
+            cells = [row[0], row[1], "", row[2], row[3]]
+            for index, cell in enumerate(cells):
+                if index == 2:
+                    built.cell("", border=CellBordersLayout.NONE, style=gap_face)
+                else:
+                    built.cell(str(cell))
     pdf.ln(2 if size_pt < TABLE_PT else 4)
     pdf.set_x(pdf.l_margin)
 
@@ -642,11 +713,12 @@ def write_plant(pdf: ReportPDF, entry: dict) -> None:
 
     write_text(pdf, "Geräteübersicht", 12, bold=True, color=PETROL, line=6)
     pdf.ln(1)
+    ordered = devices_by_name(entry["devices"])
     overview = []
-    for dev in entry["devices"]:
+    for dev in ordered:
         type_id = dev_type(dev)
         overview.append([
-            str(dev.get("devName") or "—"),
+            device_name(dev) or "—",
             str(dev.get("esnCode") or "—"),
             TYPE_LABELS.get(type_id, f"Typ {type_id}"),
             str(dev.get("invType") or "—"),
@@ -663,57 +735,58 @@ def write_plant(pdf: ReportPDF, entry: dict) -> None:
 
     sources = entry.get("kpi_source") or {}
     kpi = entry.get("kpi") or {}
-    for type_id, devs in group_devices(entry["devices"]):
+    for dev in ordered:
+        type_id = dev_type(dev)
         if type_id not in PARAM_TYPES:
             continue
-        for dev in devs:
-            dev_name = str(dev.get("devName") or dev.get("devDn") or dev.get("id"))
-            label = TYPE_LABELS.get(type_id, f"Typ {type_id}")
-            esn = str(dev.get("esnCode") or "—")
-            dev_dn = str(dev.get("devDn") or "—")
-            pdf.add_page()
-            compact = type_id in INVERTER_TYPES
+        dev_name = device_name(dev)
+        label = TYPE_LABELS.get(type_id, f"Typ {type_id}")
+        esn = str(dev.get("esnCode") or "—")
+        dev_dn = str(dev.get("devDn") or "—")
+        pdf.add_page()
+        compact = type_id in INVERTER_TYPES
+        write_text(
+            pdf,
+            f"{label}: {dev_name}",
+            12 if compact else 14,
+            bold=True,
+            color=PETROL,
+            line=5.5 if compact else 7,
+        )
+        write_text(
+            pdf,
+            f"Seriennummer {esn}  ·  devDn {dev_dn}",
+            8 if compact else 9.5,
+            color=MUTED,
+            line=4 if compact else 5,
+        )
+        pdf.ln(0.4 if compact else 1)
+        dev_id = str(dev.get("id"))
+        if sources.get(dev_id) == "history":
             write_text(
                 pdf,
-                f"{label}: {dev_name}",
-                12 if compact else 14,
-                bold=True,
-                color=PETROL,
-                line=5.5 if compact else 7,
-            )
-            write_text(
-                pdf,
-                f"Seriennummer {esn}  ·  devDn {dev_dn}",
-                8 if compact else 9.5,
+                "Parameter aus der Historie: neuester 5-Minuten-Wert der letzten 24 Stunden.",
+                9,
                 color=MUTED,
-                line=4 if compact else 5,
+                line=4.5,
             )
-            pdf.ln(0.4 if compact else 1)
-            dev_id = str(dev.get("id"))
-            if sources.get(dev_id) == "history":
-                write_text(
-                    pdf,
-                    "Parameter aus der Historie: neuester 5-Minuten-Wert der letzten 24 Stunden.",
-                    9,
-                    color=MUTED,
-                    line=4.5,
-                )
-                pdf.ln(1)
-            params = parameter_rows(kpi.get(dev_id, {}))
-            grid = parameter_grid(params)
-            if grid:
-                draw_table(
-                    pdf,
-                    [["Parameter", "Wert", "Parameter", "Wert"], *grid],
-                    (46, 43, 46, 43),
-                    ("LEFT", "RIGHT", "LEFT", "RIGHT"),
-                    size_pt=INVERTER_TABLE_PT if compact else TABLE_PT,
-                    line_height=3.5 if compact else 4.8,
-                    padding=0.55 if compact else 1.4,
-                )
-            else:
-                write_text(pdf, "Keine Parameter geliefert.", 10.5, color=MUTED, line=5)
-                pdf.ln(2)
+            pdf.ln(1)
+        raw = kpi.get(dev_id, {})
+        grid = inverter_parameter_grid(raw) if compact else parameter_grid(parameter_rows(raw))
+        if grid:
+            draw_table(
+                pdf,
+                [["Parameter", "Wert", "Parameter", "Wert"], *grid],
+                (46, 43, 46, 43),
+                ("LEFT", "RIGHT", "LEFT", "RIGHT"),
+                size_pt=INVERTER_TABLE_PT if compact else TABLE_PT,
+                line_height=3.5 if compact else 4.8,
+                padding=0.55 if compact else 1.4,
+                gap_mm=8 if compact else 0,
+            )
+        else:
+            write_text(pdf, "Keine Parameter geliefert.", 10.5, color=MUTED, line=5)
+            pdf.ln(2)
 
 
 def make_pdf(model: list[dict], created: datetime, host: str) -> ReportPDF:
