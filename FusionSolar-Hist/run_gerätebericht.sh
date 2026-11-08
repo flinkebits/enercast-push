@@ -1,0 +1,1 @@
+ython3 gerätebericht.py --plant "Allach Huberhof" --out data/Huawei-WR-Bericht_Allach-Huberhof.pdf
