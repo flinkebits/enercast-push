@@ -20,6 +20,7 @@ from gerätebericht import (
     footer_parts,
     format_plant_list,
     inverter_parameter_grid,
+    string_detail_rows,
     format_value,
     devices_by_name,
     group_devices,
@@ -175,8 +176,8 @@ class GridTest(unittest.TestCase):
         self.assertEqual(grid[1][2], "")
         self.assertEqual(grid[1][3], "")
 
-    def test_inverter_strings_share_a_row_in_numeric_order(self):
-        grid = inverter_parameter_grid({
+    def test_string_details_one_row_per_string(self):
+        data = {
             "pv10_i": 1,
             "active_power": 4,
             "pv2_u": 700,
@@ -184,14 +185,17 @@ class GridTest(unittest.TestCase):
             "pv10_u": 650,
             "insulation_resistance": 2.5,
             "pv3_u": None,
-        })
-        self.assertEqual(grid[0], ["PV-String 2 Spannung", "700 V", "PV-String 2 Strom", "2.5 A"])
-        self.assertEqual(grid[1], ["PV-String 10 Spannung", "650 V", "PV-String 10 Strom", "1 A"])
-        self.assertEqual(grid[2][0], "Wirkleistung")
-        self.assertEqual(grid[2][1], "4 kW")
-        self.assertEqual(grid[2][2], "Isolationswiderstand")
-        self.assertEqual(grid[2][3], "2.5 MΩ")
-        self.assertEqual(len(grid), 3)
+            "pv1_u": 1100,
+        }
+        self.assertEqual(string_detail_rows(data), [
+            ["PV1", "1100", "—"],
+            ["PV2", "700", "2.5"],
+            ["PV10", "650", "1"],
+        ])
+        grid = inverter_parameter_grid(data)
+        self.assertEqual(grid[0][0], "Wirkleistung")
+        self.assertEqual(grid[0][2], "Isolationswiderstand")
+        self.assertNotIn("PV1", [cell for row in grid for cell in row])
 
     def test_format_plant_list(self):
         text = format_plant_list([
